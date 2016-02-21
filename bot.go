@@ -4,12 +4,18 @@ package main
 import (
   "fmt"
   "net/http"
+  // "io"
   "io/ioutil"
   "encoding/json"
   "time"
+  "log"
+  "golang.org/x/net/websocket"
 )
 
 var comments_tracker = make(map[string]string)
+// type WebSockMW chan
+
+var socket_ch = make(chan Comment, 100)
 
 type Comment struct {
   Data struct {
@@ -72,7 +78,6 @@ func getComments(user string, comments_ch chan Comment) {
     select {
       case <- ticker.C:
         url := fmt.Sprintf("https://api.reddit.com/user/%s/comments?limit=1&before=%s", user, comments_tracker[user])
-        fmt.Println(url)
         resp, err := http.Get(url)
         if err == nil {
           body, err := ioutil.ReadAll(resp.Body)
@@ -90,23 +95,39 @@ func getComments(user string, comments_ch chan Comment) {
   }
 }
 
-func processComments(comments_ch chan Comment) {
-  comment := <- comments_ch
+func processComments(socket_ch, comments_ch chan Comment) {
+  for {
+    select {
+      case comment := <- comments_ch:
+        socket_ch <- comment
+    }
+  }
+}
+
+func WebsocketHandler(ws *websocket.Conn) {
+  for {
+    select {
+    case comment := <- socket_ch:
+      websocket.JSON.Send(ws, comment)
+    }
+  }
 }
 
 func main() {
-  c := make(chan int)
   comments_ch := make(chan Comment, 100)
   users := make([]string, 0)
+  users_list = "Poem_for_your_sprog Shitty_Watercolour "
   users = append(users, "Poem_for_your_sprog")
   users = append(users, "Shitty_Watercolour")
   users = append(users, "golangbottest")
 
   for _, user := range users {
     go getComments(user, comments_ch)
-    go processComments(comments_ch)
-    // go pushComments()
-  }  
-  <-c
-}
+    go processComments(socket_ch, comments_ch)
+  }
 
+  http.Handle("/", websocket.Handler(WebsocketHandler))
+  if err := http.ListenAndServe(":1234", nil); err != nil {
+    log.Fatal("ListenAndServe:", err)
+  }
+}
